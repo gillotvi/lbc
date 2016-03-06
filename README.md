@@ -1,4 +1,4 @@
-# lbc
+# lbc v2.2
 Fix suite à mise en ligne de la version leboncoin 2016
 Le contenu de script.js permet de requêter leBonCoin dans le même esprit que la v2.1
 Il permet de s'adapter à la nouvelle charte graphique du BonCoin
