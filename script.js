@@ -2,15 +2,19 @@
 * global var section
 */
 var debug = false;
+
 var menuLabel = "Lbc Alertes";
 var menuMailSetupLabel = "Setup email";
 var menuSearchSetupLabel = "Setup recherche";
 var menuSearchLabel = "Lancer manuellement";
 var menuLog = "Activer/Désactiver les logs";
 var menuArchiveLog = "Archiver les logs";
+var menuPurgeLog = "Purger le log";
+var menuNumberOfRowsToKeepInLog = "Nombre de lignes à conserver dans le log lors d'une purge";
 
 //Positionnement des log dans l'onglet log ? true=oui ; false=non
 ScriptProperties.setProperty('log', false);
+var scriptProperties = PropertiesService.getScriptProperties();
 
 /**
 * main function
@@ -19,77 +23,79 @@ function lbc(sendMail){
   if(sendMail != false){
     sendMail = true;
   }
-  var to = ScriptProperties.getProperty('email');
+  var to = scriptProperties.getProperty('email');
   if(to == "" || to == null ){
     Browser.msgBox("L'email du destinataire n'est pas défini. Allez dans le menu \"" + menuLabel + "\" puis \"" + menuMailSetupLabel + "\".");
   } else {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var sheet = ss.getSheetByName("Données");
+    var sheet = ss.getSheetByName("Recherches");
     var slog = ss.getSheetByName("Log");
     var i = 0; var nbSearchWithRes = 0; var nbResTot = 0;
-    var body = ""; var corps = ""; var bodyHTML = ""; var corpsHTML = ""; var summary = ""; var searchURL = ""; var searchName = "";
-    var stop = false;
-    while((searchURL = sheet.getRange(2+i,2).getValue()) != ""){
+    var body = ""; var corps = ""; var announceHTML = ""; var bodyHTML = ""; var summary = ""; var searchURL = ""; var searchName = "";
+
+    while((searchURL = sheet.getRange(2+i,2).getValue()) != "") {
       searchName = sheet.getRange(2+i,1).getValue();
       Logger.log("Recherche pour " + searchName);
       var nbRes = 0;
       body = "";
-      bodyHTML = "";
-      stop = false;
-      
-      var response = UrlFetchApp.fetch(searchURL).getContentText("iso-8859-15");
-      if(response.indexOf("Aucune annonce") < 0){  
-        //l'url répond un contenu
-        var data = extractAdsList_(response);
-        data = data.replace(/<aside class=/gi, "<bside class=");
-        debug_("data1 : " + data);
+      announceHTML = "";
+      var rep = UrlFetchApp.fetch(searchURL).getContentText("iso-8859-15");
+      if(rep.indexOf("Aucune annonce") < 0) {
+        var data = splitResult_(rep);
         data = data.substring(data.indexOf("<a"));
-        debug_("data2 : " + data);
-        var firsta = extractA_(data);
-        
+        var announceURL = extractA_(data);
+        var firstID     = extractId_(announceURL);
         if(sendMail == null || sendMail == true) {
-          var holda = sheet.getRange(2+i,3).getValue();
-          //est-ce que l'annonce est identique à la dernière retournée au précédent lancement du script ?
-          if(extractId_(firsta) > holda) {// && holda != ""){  //if(extractId_(firsta) != holda) {// && holda != ""){
-            while(data.indexOf("<a") > 0 || stop == false){
-              var url = extractA_(data);
-              if(extractId_(url) != holda){//if(extractId_(a) > holda){
-                var title = extractTitle_(data);
-                var img = extractImage_(data);
-                var place = extractPlace_(data);
-                var date = extractDate_(data);
-                var placeAndDate = place + " / " + date;
-                var price = extractPrice_(data);
-                var seller = extractSeller_(data);
-                body = body + "<li><a href=\"" + url + "\">" + title + "</a> (" + price + " euros - " + place + ")</li>";
-                bodyHTML = bodyHTML + "<li style=\"list-style:none;margin-bottom:20px;clear:both;background:#EAEBF0;border-top:1px solid #ccc;\"><div style=\"width:400px;padding:10px 0;\"><a href=\"" + url + "\"><img src=\""+ img +"\"/></a><div style=\"float:left;width:400px;padding:10px 0;\"><a href=\"" + url + "\" style=\"font-size:14px;font-weight:bold;color:#369;text-decoration:none;\">" + title + seller +"</a><div>" + placeAndDate +"</div><div style=\"line-height:18px;font-size:14px;font-weight:bold;\">" + price + "</div></div></li>";
-                if(data.indexOf("<a",10) > 0){
-                  debug_("data3 : " + data);
-                  var data = data.substring(data.indexOf("<a",10));
-                  debug_("data4 : " + data);
-                }else{
-                  stop = true;
-                  debug_("stop : " + stop);
-                }
+          var lastSavedID = sheet.getRange(2+i,3).getValue();
+          if (firstID != lastSavedID) {
+            var announceId = firstID;
+            //While ID of announce is different from the saved one
+            do {
+              Logger.log("data = " + data);
+              var endAnnounceMarker = "</section>";
+              var endAnnounceMarkerPos = data.indexOf(endAnnounceMarker);
+              if (endAnnounceMarkerPos > 0) {
                 nbRes++;
-              }else{
-                stop = true;
+                var title = extractTitle_(data);
+                var place = extractPlace_(data);
+                var price = extractPrice_(data);
+                var vendpro = extractPro_(data);
+                var date = extractDate_(data);
+                var image = extractImage_(data, endAnnounceMarkerPos);
+
+                announceHTML += "<tr style=\"height:1px; padding-bottom:10px;\"><td style=\"border-top:1px solid #ccc;\" colspan=\"2\"></td></tr>"
+                announceHTML += "<tr><td style=\"width:200px;padding-right:20px;\"><a href=\"" + announceURL + "\" target=\"" + announceId + "\"><img src=\""+ image +"\"></a></td>";
+                announceHTML += "<td style=\"align:left; padding-left:10px;\"><a href=\"" + announceURL + "\" target=\"" + announceId + "\" style=\"font-size: 14px;font-weight:bold;color:#369;text-decoration:none;\">";
+                announceHTML += title + vendpro +"</a> <div>" + place + "</div><div>" + date + "</div><div style=\"font-size:14px;font-weight:bold;\">" + price + "</div>";
+                announceHTML += "</td></tr>";
+                               
+                //Skip the block already analyzed
+                data = data.substring(endAnnounceMarkerPos+endAnnounceMarker.length);
+                
+                announceURL = extractA_(data);
+                announceId  = extractId_(announceURL);
               }
-            }
-            nbSearchWithRes++;
-            corps = corps + "<p>Votre recherche : <a name=\""+ searchName + "\" href=\""+ searchURL + "\"> "+ searchName +" (" + nbRes + ")</a></p><ul>" + body + "</ul>";
-            corpsHTML = corpsHTML + "<p style=\"display:block;clear:both;padding-top:20px;font-size:14px;\">Votre recherche : <a name=\""+ searchName + "\" href=\""+ searchURL + "\"> "+ searchName +" (" + nbRes + ")</a></p><ul>" + bodyHTML + "</ul>";
-            summary += "<li><a href=\"#"+ searchName + "\">"+ searchName +" (" + nbRes + ")</a></li>"
-            if(ScriptProperties.getProperty('log') == "true" || ScriptProperties.getProperty('log') == null || ScriptProperties.getProperty('log') == ""){
+              else
+                announceId = "";
+            } while ((announceId != "") && (announceId != lastSavedID))
+            if (nbRes > 0)
+               nbSearchWithRes++;
+            
+            bodyHTML += "<p style=\"display:block;clear:both;padding-top:2px;font-size:14px;font-weight:bold;background:#F1F1F5;\">Recherche <a name=\""+ searchName;
+            bodyHTML += "\" href=\""+ searchURL + "\"> "+ searchName +" (" + nbRes + ")</a></p>";
+            bodyHTML += "<table border=\"0\" style=\"width:100%; vertical-align:middle; background:#FFFFFF;\"><tbody>" + announceHTML + "</tbody></table>";
+            summary  += "<li><a href=\"#"+ searchName + "\">"+ searchName +" (" + nbRes + ")</a></li>"
+                        
+            if(scriptProperties.getProperty('log') == "true" || scriptProperties.getProperty('log') == null || scriptProperties.getProperty('log') == ""){
               slog.insertRowBefore(2);
               slog.getRange("A2").setValue(searchName);
               slog.getRange("B2").setValue(nbRes);
-              slog.getRange("C2").setValue(new Date);
+              var currentDate = new Date();
+              slog.getRange("C2").setValue(currentDate.getDate() + "/" + currentDate.getMonth() + "/" + currentDate.getYear() + " - " + currentDate.toLocaleTimeString().replace(" CEST",""));
             }
-            //sheet.getRange(2+i,3).setValue(extractId_(firsta));
           }
         }
-        sheet.getRange(2+i,3).setValue(extractId_(firsta));
+        sheet.getRange(2+i,3).setValue(firstID);
         nbResTot += nbRes;
       } else {
         //l'url retourne "aucune annonce" => il n'y pas de résultat => on set une value quelconque dans la sheet de suivi
@@ -105,79 +111,93 @@ function lbc(sendMail){
     if(nbSearchWithRes > 1) {
       //plusieurs recherches retourne des résultats => création d'un sommaire
       summary = "<p style=\"display:block;clear:both;padding-top:20px;font-size:14px;\">Accès rapide :</p><ul>" + summary + "</ul>";
-      debug_(summary);
-      //corps = summary + corps;
-      corpsHTML = summary + corpsHTML;
+      bodyHTML = summary + bodyHTML;
+      debug_(bodyHTML);
     }
-    if(corps != ""){
-      var title = "Alertes leboncoin.fr : " + nbResTot + " nouveau" + (nbResTot>1?"x":"") + " résultat" + (nbResTot>1?"s":"");
+    
+    debug_("Nb de res tot:" + nbResTot);
+    //on envoie le mail?
+    if(nbSearchWithRes > 0){
+      var title = "Alerte leboncoin.fr : " + nbResTot + " nouveau" + (nbResTot>1?"x":"") + " résultat" + (nbResTot>1?"s":"");
       debug_("titre msg : " + title);
       corps = "Si cet email ne s’affiche pas correctement, veuillez sélectionner\nl’affichage HTML dans les paramètres de votre logiciel de messagerie.";
-      debug_("corps msg : " + corps);
-      corpsHTML = "<body>" + corpsHTML + "</body>";
-      debug_("corpsHTML msg : " + corpsHTML);
-      MailApp.sendEmail(to,title,corps,{ htmlBody: corpsHTML });
+      bodyHTML = "<body>" + bodyHTML + "</body>";
+      debug_("bodyHTML msg : " + bodyHTML);
+      
+      if (bodyHTML.length > 200*1024) {
+        // Email body size is limited to 200 KB. Too big body is then truncated to avoid script to fail
+        bodyHTML = bodyHTML.substring(0, 200*1024-1);
+      }
+        
+      MailApp.sendEmail(to,title,corps,{ htmlBody: bodyHTML });
       debug_("Nb mail journalier restant : " + MailApp.getRemainingDailyQuota());
     }
   }
 }
 
 /**
-* Extrait ID de l'annonce
+* Extrait l'id de l'annonce LBC
 */
-function extractId_(id){
-  var extractAdsId = id.substring(id.indexOf("/",25) + 1,id.indexOf(".htm"));
+function extractId_(a){
+  var extractAdsId = a.substring(a.lastIndexOf("/") + 1,a.indexOf(".htm"));
   debug_("extractAdsId : " + extractAdsId);
   return extractAdsId;
 }
 
 /**
-* Extrait URL de l'annonce
+* Extrait le lien de l'annonce
 */
 function extractA_(data){
-  var extractAdsUrl = data.substring(data.indexOf("<a href=\"") + 9 , data.indexOf(".htm", data.indexOf("<a href=\"") + 9) + 4);
-  extractAdsUrl = extractAdsUrl.replace("//","http://");
-  debug_("extractAdsUrl : " + extractAdsUrl);
-  return extractAdsUrl;
+  var aPos = data.indexOf("<a");
+  if (aPos < 0)
+    return "";
+  var extractAdsUrl = data.substring(aPos + 9 , data.indexOf(".htm", aPos + 9) + 4);
+  // Handle case when the URL doesn't start by http:
+  if (extractAdsUrl.indexOf("//") == 0)
+    return "http:" + extractAdsUrl;
+  else
+    return extractAdsUrl;
 }
 
 /**
-* Extrait Titre de l'annonce
+* Extrait le titre de l'annonce
 */
 function extractTitle_(data){
-  var extractAdsTitle = data.substring(data.indexOf("title=") + 7 , data.indexOf("\"", data.indexOf("title=") + 7));
-  debug_("extractAdsTitle : " + extractAdsTitle);
-  return extractAdsTitle;
+  return data.substring(data.indexOf("title=") + 7 , data.indexOf("\"", data.indexOf("title=") + 7) );
 }
 
 /**
-* Extrait Type de vendeur (pro/part)
+* Extrait vendeur pro
 */
-function extractSeller_(data){
-  var extractTypeSeller = data.substring(data.indexOf("\"ad_offres\" : \"") + 15 , data.indexOf("\"", data.indexOf("\"ad_offres\" : \"") + 15));
-  debug_("extractTypeSeller : " + extractTypeSeller);
-  if (extractTypeSeller.indexOf("part") == -1) {
-    extractTypeSeller = " (" + extractTypeSeller + ")"
-    return extractTypeSeller;
+function extractPro_(data){
+  var proMarker = "<span class=\"ispro\">";
+  var proStart  = data.indexOf(proMarker);
+  var pro = data.substring(proStart + proMarker.length, data.indexOf("</span>", proStart + proMarker.length) );
+  
+  if(pro.indexOf("(pro)") > 0){
+    return " (pro)";
+  }else{
+    return "";
   }
-  return "";
 }
 
 /**
-* Extrait Lieu de l'annonce
+* Extrait le lieu de l'annonce
 */
 function extractPlace_(data){
-  //Raccourcissement de la longueur de "data" pour faciliter l'extraction du lieu
-  data = data.substring(data.indexOf("</p>") + 4 , data.indexOf("</aside>", data.indexOf("</p>") + 4));
-  var extractAdsPlace = data.substring(data.indexOf("item_supp\">") + 11 , data.indexOf("</p>", data.indexOf("item_supp\">") + 11));
-  debug_("extractAdsPlace : " + extractAdsPlace);
-  return extractAdsPlace;
+  // Look for the 2nd "item_supp" block  
+  var infoMarker = "<p class=\"item_supp\">";
+  var info1pos = data.indexOf(infoMarker);
+  var info2pos = data.indexOf(infoMarker, info1pos + infoMarker.length);  
+  return data.substring(info2pos + infoMarker.length, data.indexOf("</p>", info2pos) );
 }
 
 /**
-* Extrait Prix de l'annonce
+* Extrait le prix de l'annonce
 */
 function extractPrice_(data){
+  
+  /*
   //Raccourcissement de la longueur de "data" pour conserver 1 seule annonce et faciliter l'extraction du prix
   data = data.substring(data.indexOf("item_imagePic") + 13 , data.indexOf("</aside>", data.indexOf("item_imagePic") + 13));
   //Est-ce qu'il y a un prix sur l'annonce ?
@@ -187,24 +207,45 @@ function extractPrice_(data){
     return extractAdsPrice;
   }
   return "";
+  */
+  
+  var priceMarker = "<h3 class=\"item_price\">";
+  var priceStart  = data.indexOf(priceMarker);
+  if (priceStart < 0)
+    return "";
+  else
+    return data.substring(priceStart + priceMarker.length, data.indexOf("</h3>", priceStart + priceMarker.length) );
 }
 
 /**
-* Extrait Date de l'annonce
+* Extrait la date de l'annonce
 */
 function extractDate_(data){
+  
+  /*
   //Raccourcissement de la longueur de "data" pour faciliter l'extraction de la date
   data = data.substring(data.indexOf("item_absolute\">") + 15 , data.indexOf("</aside>", data.indexOf("item_absolute\">") + 15));
   var extractAdsDate = data.substring(data.indexOf("item_supp\">") + 12 , data.indexOf("</p>", data.indexOf("item_supp\">") + 12));
   extractAdsDate = extractAdsDate.replace("," , " / ");
   debug_("extractAdsDate : " + extractAdsDate);
   return extractAdsDate;
+  */  
+  
+  // Look for the 3rd "item_supp" block  
+  var infoMarker = "<p class=\"item_supp\">";
+  var info1pos = data.indexOf(infoMarker);
+  var info2pos = data.indexOf(infoMarker, info1pos + infoMarker.length);
+  var info3pos = data.indexOf(infoMarker, info2pos + infoMarker.length);
+    
+  return data.substring(info3pos + infoMarker.length, data.indexOf("</p>", info3pos) );
 }
 
 /**
-* Extrait Image de l'annonce
+* Extrait l'image de l'annonce
 */
-function extractImage_(data){
+function extractImage_(data, endAnnounceMarkerPos){
+  
+  /*
   //Raccourcissement de la longueur de "data" pour conserver 1 seule annonce et faciliter l'extraction de l'image
   data = data.substring(data.indexOf("item_imagePic") + 13 , data.indexOf("</aside>", data.indexOf("item_imagePic") + 13));
   //Est-ce qu'il y a une image sur cette annonce ?
@@ -214,22 +255,48 @@ function extractImage_(data){
     extractAdsImg = extractAdsImg.replace("//","http://");
     debug_("extractAdsImg : " + extractAdsImg);
     return extractAdsImg;
+  */
+  
+  var imgStartMarker = "data-imgSrc=";
+  var imageStart = data.indexOf(imgStartMarker);
+  if ((imageStart < 0) || (imageStart > endAnnounceMarkerPos)) {
+    return "https://www.leboncoin.fr/img/no-picture-adview.png";
   }
-  debug_("Pas d'image sur l'annonce");
-  return "";
+  else {
+    
+    var imageEnd = data.indexOf("data-imgAlt=", imageStart);
+    var image = data.substring(imageStart + imgStartMarker.length + 1, imageEnd - 2);
+    image = image.replace("//","http://");
+    return image;
+  }
 }
 
 /**
 * Extrait la liste des annonces
 */
-function extractAdsList_(text){
-var debut = text.indexOf("<ul class=\"tabsContent dontSwitch block-white\">");
-  debug_("position debut liste des annonces : " + debut);
+function splitResult_(text){
+  var debut = text.indexOf("<section id=\"listingAds\"");
+  debut = text.indexOf("<li>", debut);
+  var fin = text.indexOf("<div id=\"google_ads\"");
+  return text.substring(debut,fin);
+}
 
-var fin = text.indexOf("<!-- Check the utility of this part -->");
-  debug_("position fin liste des annonces : " + fin);
-  
-return text.substring(debut + "<ul class=\"tabsContent dontSwitch block-white\">".length,fin);
+/**
+* Activer/Désactiver les logs
+*/
+function dolog(){
+  if(scriptProperties.getProperty('log') == "true"){
+    scriptProperties.setProperty('log', false);
+    Browser.msgBox("Les logs ont été désactivées.");
+  }
+  else if(scriptProperties.getProperty('log') == "false"){
+    scriptProperties.setProperty('log', true);
+    Browser.msgBox("Les logs ont été activées.");
+  }
+  else{
+    scriptProperties.setProperty('log', false);
+    Browser.msgBox("Les logs ont été désactivées.");
+  }
 }
 
 function setup(){
@@ -240,40 +307,24 @@ function setup(){
 * Definition du mail du destinataire
 */
 function setupMail(){
-  if(ScriptProperties.getProperty('email') == "" || ScriptProperties.getProperty('email') == null ){
+  if(scriptProperties.getProperty('email') == "" || scriptProperties.getProperty('email') == null ){
     var quest = Browser.inputBox("Entrez votre email, le programme ne vérifie pas le contenu de cette boite.", Browser.Buttons.OK_CANCEL);
     if(quest == "cancel"){
       Browser.msgBox("Ajout email annulé.");
       return false;
     }else{
-      ScriptProperties.setProperty('email', quest);
-      Browser.msgBox("Email " + ScriptProperties.getProperty('email') + " ajouté");
+      scriptProperties.setProperty('email', quest);
+      Browser.msgBox("Email " + scriptProperties.getProperty('email') + " ajouté");
     }
   }else{
-    var quest = Browser.inputBox("Entrez un email pour modifier l'email : " + ScriptProperties.getProperty('email') , Browser.Buttons.OK_CANCEL);
+    var quest = Browser.inputBox("Entrez un email pour modifier l'email : " + scriptProperties.getProperty('email') , Browser.Buttons.OK_CANCEL);
     if(quest == "cancel"){
       Browser.msgBox("Modification email annulé.");
       return false;
     }else{
-      ScriptProperties.setProperty('email', quest);
-      Browser.msgBox("Email " + ScriptProperties.getProperty('email') + " ajouté");
+      scriptProperties.setProperty('email', quest);
+      Browser.msgBox("Email " + scriptProperties.getProperty('email') + " ajouté");
     }
-  }
-}
-
-/**
-* Activer/Désactiver les logs
-*/
-function dolog(){
-  if(ScriptProperties.getProperty('log') == "true"){
-    ScriptProperties.setProperty('log', false);
-    Browser.msgBox("Les logs ont été désactivées.");
-  }else if(ScriptProperties.getProperty('log') == "false"){
-    ScriptProperties.setProperty('log', true);
-    Browser.msgBox("Les logs ont été activées.");
-  }else{
-    ScriptProperties.setProperty('log', false);
-    Browser.msgBox("Les logs ont été désactivées.");
   }
 }
 
@@ -294,65 +345,125 @@ function archivelog(){
 }
 
 /**
-* Fonction surOuverture de la feuille => ajout des menus lbc
+* Définir le nombre de ligne(s) à conserver dans les logs
 */
-function onOpen() {
-var sheet = SpreadsheetApp.getActiveSpreadsheet();
-var entries = [{
-name : menuMailSetupLabel,
-functionName : "setupMail"
-},{
-name : menuSearchSetupLabel,
-functionName : "setup"
-},
-  null
-,{
-name : menuSearchLabel,
-functionName : "lbc"
-},
-null
-,{
-name : menuLog,
-functionName : "dolog"
-},{
-name : menuArchiveLog,
-functionName : "archivelog"
-}];
-sheet.addMenu(menuLabel, entries);
+function setupNumberOfRowsToKeepInLog()
+{
+  if(ScriptProperties.getProperty('NumberOfRowsToKeepInLog') == "" || ScriptProperties.getProperty('NumberOfRowsToKeepInLog') == null ){
+    var quest = Browser.inputBox("Indiquez le nombre de lignes à conserver dans le log lors d'une purge : ", Browser.Buttons.OK_CANCEL);
+    if(quest == "cancel"){
+      Browser.msgBox("Paramétrage du nombre de lignes à conserver dans le log annulé, valeur inchangée (= " + ScriptProperties.getProperty('NumberOfRowsToKeepInLog') + ")");
+      return false;
+    }else if(isNaN(quest)){
+      Browser.msgBox("Vous devez entrer une valeur numérique entière");
+      setupNumberOfRowsToKeepInLog()
+    }else{
+      if(quest == 0){quest = 1;} else if(quest != "") {quest++;} else {quest = null;} //On préserve la première ligne contenant les entêtes de colone
+      ScriptProperties.setProperty('NumberOfRowsToKeepInLog', quest);
+      Browser.msgBox("Nombre de lignes à conserver dans le fichier de log lors d'une purge paramétré à : " + ScriptProperties.getProperty('NumberOfRowsToKeepInLog') + " (Notez que la première ligne contenant les entêtes de colone sera conservée)");
+      return true;
+    }
+  }else{
+    var quest = Browser.inputBox("Indiquez le nombre de lignes à conserver dans le log lors d'une purge : (valeur actuelle = ", + ScriptProperties.getProperty('NumberOfRowsToKeepInLog') + ")" , Browser.Buttons.OK_CANCEL);
+    if(quest == "cancel"){
+      Browser.msgBox("Paramétrage du nombre de lignes à conserver dans le log annulé, valeur inchangée (= " + ScriptProperties.getProperty('NumberOfRowsToKeepInLog') + ")");
+      return false;
+    }else if(isNaN(quest)){
+      Browser.msgBox("Vous devez entrer une valeur numérique entière");
+       setupNumberOfRowsToKeepInLog()
+    }else{
+      if(quest == 0){quest = 1;} else if(quest != "") {quest++;} else {quest = null;} //On préserve la première ligne contenant les entêtes de colone
+      ScriptProperties.setProperty('NumberOfRowsToKeepInLog', quest);
+      Browser.msgBox("Nombre de lignes à conserver dans le fichier de log lors d'une purge paramétré à : " + ScriptProperties.getProperty('NumberOfRowsToKeepInLog') + " (Notez que la première ligne contenant les entêtes de colone sera conservée)");
+      return true;
+    }
+  }
 }
 
-function onInstall()
+/**
+* Purger les logs avec les paramètres définis dans setupNumberOfRowsToKeepInLog()
+*/
+function purgeLog()
 {
-onOpen();
+  if(ScriptProperties.getProperty('NumberOfRowsToKeepInLog') == "" || ScriptProperties.getProperty('NumberOfRowsToKeepInLog') == null ){
+    if (setupNumberOfRowsToKeepInLog() == false){Browser.msgBox("Purge annulée, le nombre de lignes à conserver dans le log n'est pas paramétré");}
+  }
+  if(ScriptProperties.getProperty('NumberOfRowsToKeepInLog') != "" && ScriptProperties.getProperty('NumberOfRowsToKeepInLog') != null ){
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName("Log");
+    var howmany = sheet.getLastRow() - ScriptProperties.getProperty('NumberOfRowsToKeepInLog')
+    if(howmany > 0) {
+      sheet.deleteRows(ScriptProperties.getProperty('NumberOfRowsToKeepInLog'), howmany);
+    }
+  }
+}
+
+/**
+* Fonction surOuverture de la feuille => ajout des menus lbc
+*/
+function onOpen(){
+  var sheet = SpreadsheetApp.getActiveSpreadsheet();
+  var entries = [{
+    name : menuMailSetupLabel,
+    functionName : "setupMail"
+  },{
+    name : menuSearchSetupLabel,
+    functionName : "setup"
+  },
+  null,
+  {
+    name : menuSearchLabel,
+    functionName : "lbc"
+  },
+  null,
+  {
+    name : menuLog,
+    functionName : "dolog"
+  },{
+    name : menuArchiveLog,
+    functionName : "archivelog"
+  },{
+    name : menuPurgeLog,
+    functionName : "purgeLog"
+  },{
+    name : menuNumberOfRowsToKeepInLog,
+    functionName : "setupNumberOfRowsToKeepInLog"
+  }];
+  sheet.addMenu(menuLabel, entries);
+
+}
+
+function onInstall(){
+  onOpen();
 }
 
 /**
 * Retourne la date
 */
 function myDate_(){
-var today = new Date();
-debug_(today.getDate()+"/"+(today.getMonth()+1)+"/"+today.getFullYear());
-return today.getDate()+"/"+(today.getMonth()+1)+"/"+today.getFullYear();
+  var today = new Date();
+  debug_(today.getDate()+"/"+(today.getMonth()+1)+"/"+today.getFullYear());
+  return today.getDate()+"/"+(today.getMonth()+1)+"/"+today.getFullYear();
 }
 
 /**
 * Retourne l'heure
 */
-function myTime_(){
-var temps = new Date();
-var h = temps.getHours();
-var m = temps.getMinutes();
-if (h<"10"){h = "0" + h ;}
-if (m<"10"){m = "0" + m ;}
-debug_(h+":"+m);
-return h+":"+m;
+  function myTime_(){
+  var temps = new Date();
+  var h = temps.getHours();
+  var m = temps.getMinutes();
+  if (h<"10"){h = "0" + h ;}
+  if (m<"10"){m = "0" + m ;}
+  debug_(h+":"+m);
+  return h+":"+m;
 }
 
 /**
 * Debug
 */
 function debug_(msg) {
-if(debug != null && debug) {
-Browser.msgBox(msg);
-}
+  if(debug != null && debug) {
+    Browser.msgBox(msg);
+  }
 }
